@@ -24,7 +24,7 @@
     <ClCompile Include="ScreenshotMgr.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="SSTesting.cpp">
+    <ClCompile Include="NetworkInterface.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -36,6 +36,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ScreenshotMgr.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NetworkInterface.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

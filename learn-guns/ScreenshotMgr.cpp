@@ -1,6 +1,33 @@
 #include "ScreenshotMgr.h"
 #include <Windows.h>
 
+
+HSV::HSV(float r, float g, float b)
+{
+	float Cmax = max(r, max(g, b));
+	float Cmin = min(r, min(g, b));
+	
+	float delta = Cmax - Cmin;
+
+	if (abs(Cmax - r) < 0.00001f)
+	{
+		hue = 60.f * fmod((g - b) / delta, 6.f);
+	}
+	else if (abs(Cmax - g) < 0.00001f)
+	{
+		hue = 60.f * (((b - r) / delta) + 2);
+	}
+	else
+	{
+		hue = 60.f * (((r - g) / delta) + 4);
+	}
+	hue *= (PI / 180.f);
+
+	sat = (Cmax <= 0 ? 0 : (delta / Cmax));
+
+	val = Cmax;
+}
+
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~helper~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -81,7 +108,7 @@ PBITMAPINFO CreateBitmapInfoStruct(HBITMAP hBmp)
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~real code~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-void convertScreenshot(byte* screenshotData, int width, int height, vector<vector<float>>& output)
+void convertScreenshot(byte* screenshotData, int width, int height, vector<vector<HSV>>& actualImg, vector<vector<float>>& output)
 {
 	vector<int> aa;
 	for (int a = 0; a < width * height * 4; a++)
@@ -100,7 +127,20 @@ void convertScreenshot(byte* screenshotData, int width, int height, vector<vecto
 			dst[a][b] = new byte[3];
 		}
 	}
+	actualImg.reserve(height);
+	for (int a = 0; a < height; a++)
+	{
+		actualImg.emplace_back(vector<HSV>());
+		for (int b = 0; b < width; b++)
+		{
+			byte r = screenshotData[((height - 1 - a) * width * 4) + (b * 4) + 2];
+			byte g = screenshotData[((height - 1 - a) * width * 4) + (b * 4) + 1];
+			byte bb = screenshotData[((height - 1 - a) * width * 4) + (b * 4)];
 
+			HSV hsv = HSV((float)r / 255.f, (float)g / 255.f, (float)bb / 255.f);
+			actualImg[a].emplace_back(hsv);
+		}
+	}
 	//nearest-neighbor downsample
 
 	float xScale = (float)width / 64.0f, yScale = (float)height / 64.0f;
@@ -149,7 +189,7 @@ void convertScreenshot(byte* screenshotData, int width, int height, vector<vecto
 	delete[] dst;
 }
 
-bool takeScreenshot(vector<vector<float>>& dataOut)
+bool takeScreenshot(vector<vector<HSV>>& directDataOut, vector<vector<float>>& dataOut)
 {
 	RECT desktopSize;
 	HWND hDesktop = GetDesktopWindow();
@@ -185,7 +225,7 @@ bool takeScreenshot(vector<vector<float>>& dataOut)
 		return false;
 	}
 
-	convertScreenshot((byte*)image, bmpHdr->biWidth, bmpHdr->biHeight, dataOut);
+	convertScreenshot((byte*)image, bmpHdr->biWidth, bmpHdr->biHeight, directDataOut, dataOut);
 
 	GlobalFree((HGLOBAL)image);
 
@@ -194,4 +234,27 @@ bool takeScreenshot(vector<vector<float>>& dataOut)
 	DeleteObject(captureBMP);
 
 	return true;
+}
+
+bool outOfAmmo(vector<vector<HSV>>& imageHSV)
+{
+	const float MIN_PERCENT = 1.f / 11.f;
+	int pixelCounter = 0;
+
+	for (int a = 0; a < imageHSV.size(); a++)
+	{
+		for (int b = 0; b < imageHSV[a].size(); b++)
+		{
+			HSV const& hsv = imageHSV[a][b];
+			float clampedRedHue = max(pow(hsv.hue - PI, 2) - (PI * PI - 1), 0);
+
+			if (clampedRedHue > 0 && hsv.sat > 0.8f && hsv.val > 0.3f)
+			{
+				pixelCounter++;
+			}
+		}
+	}
+	
+	float percentage = (float)pixelCounter / (float)(imageHSV.size() * imageHSV[0].size());
+	return percentage > MIN_PERCENT;
 }

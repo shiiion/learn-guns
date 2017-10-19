@@ -14,7 +14,7 @@ public:
 struct ConvData : public Data
 {
 public:
-	//x, y no depth 
+	//depth, x, y
 	vector<vector<vector<float>>> tensor;
 
 	void loadFromString(string const& data) override;
@@ -61,8 +61,8 @@ public:
 class Conv2DLayer : public Layer
 {
 private:
-	int x, y, k;
-	vector<vector<vector<float>>> kernels;
+	int x, y, z, k;
+	vector<vector<vector<vector<float>>>> kernels;
 	vector<float> biases;
 	string activation;
 public:
@@ -107,4 +107,8 @@ private:
 public:
 	void loadModel(string const& modelPath);
 	Data* predict(Data* input);
+	int getNumLayers()
+	{
+		return layers.size();
+	}
 };

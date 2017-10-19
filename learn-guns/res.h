@@ -11,6 +11,7 @@ using std::vector;
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define FIND(s1, s2) (s2.find(s1) != string::npos)
 #define clamp(minval, maxval, val) (max(min((val), (maxval)), (minval)))
+#define PI 3.14159265f
 
 
 typedef vector<vector<float>> matrix;

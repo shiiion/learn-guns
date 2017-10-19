@@ -19,6 +19,40 @@ void getFileContents(const char *filename, string& contents)
 	}
 }
 
+//not my code!
+std::istream& safeGetline(std::istream& is, std::string& t)
+{
+	t.clear();
+
+	// The characters in the stream are read one-by-one using a std::streambuf.
+	// That is faster than reading them one-by-one using the std::istream.
+	// Code that uses streambuf this way must be guarded by a sentry object.
+	// The sentry object performs various tasks,
+	// such as thread synchronization and updating the stream state.
+
+	std::istream::sentry se(is, true);
+	std::streambuf* sb = is.rdbuf();
+
+	for (;;) {
+		int c = sb->sbumpc();
+		switch (c) {
+		case '\n':
+			return is;
+		case '\r':
+			if (sb->sgetc() == '\n')
+				sb->sbumpc();
+			return is;
+		case EOF:
+			// Also handle the case when the last line has no line ending
+			if (t.empty())
+				is.setstate(std::ios::eofbit);
+			return is;
+		default:
+			t += (char)c;
+		}
+	}
+}
+
 void clearSpaces(string& s)
 {
 	s.erase(std::remove_if(s.begin(), s.end(), isspace), s.end());
@@ -103,7 +137,7 @@ void activation1d(string const& name, vector<float>& data)
 	}
 }
 
-void convolve(matrix const& kernel, matrix const& data, float bias, matrix& out)
+void convolve(matrix const& kernel, matrix const& data, matrix& out)
 {
 
 	for (int a = 0; a < data.size() - (kernel.size() - 1); a++)
@@ -119,7 +153,7 @@ void convolve(matrix const& kernel, matrix const& data, float bias, matrix& out)
 					sum += data[a + d][b + c] * kernel[c][d];
 				}
 			}
-			out[a].push_back(sum + bias);
+			out[a].push_back(sum);
 		}
 	}
 }
@@ -130,10 +164,11 @@ void Conv2DLayer::loadLayer(string const& layerString)
 {
 	std::istringstream iss(layerString);
 	string sOut;
-	int step = 0;
-	int stride = 0;
+	int depthStep = 0;
+	int colStride = 0;
+	int rowStride = 0;
 	
-	vector<vector<vector<float>>> kernelsTemp;
+	vector<vector<vector<vector<float>>>> kernelsTemp;
 
 	while (std::getline(iss, sOut))
 	{
@@ -155,35 +190,50 @@ void Conv2DLayer::loadLayer(string const& layerString)
 			remove(sOut, '['); remove(sOut, ']');
 			parseArray(sOut, kernel);
 
-			if (kernelsTemp.size() == stride)
+			if (kernelsTemp.size() == colStride)
 			{
-				kernelsTemp.push_back(vector<vector<float>>());
+				kernelsTemp.push_back(vector<vector<vector<float>>>());
 			}
 
-			kernelsTemp[stride].emplace_back(kernel);
-
-			if (step == (x - 1))
+			if (kernelsTemp[colStride].size() == rowStride)
 			{
-				step = -1; stride++;
+				kernelsTemp[colStride].push_back(vector<vector<float>>());
 			}
-			step++;
+
+			kernelsTemp[colStride][rowStride].emplace_back(kernel);
+
+			if (depthStep == (z - 1))
+			{
+				depthStep = -1; rowStride++;
+			}
+			if (rowStride == y)
+			{
+				rowStride = 0; colStride++;
+			}
+
+			depthStep++;
 		}
 		else
 		{
 			vector<string> dims;
 			split(sOut, ',', dims);
 			x = std::stoi(dims[0]); y = std::stoi(dims[1]);
-			k = std::stoi(dims[3]);
+			z = std::stoi(dims[2]); k = std::stoi(dims[3]);
 		}
 	}
 	for (int a = 0; a < k; a++)
 	{
-		kernels.push_back(vector<vector<float>>());
-		for (int b = 0; b < y; b++)
+		kernels.push_back(vector<vector<vector<float>>>());
+		for (int b = 0; b < z; b++)
 		{
-			kernels[a].push_back(vector<float>());
+			kernels[a].push_back(vector<vector<float>>());
+			for (int c = 0; c < y; c++)
+			{
+				kernels[a][b].push_back(vector<float>());
+			}
 		}
 	}
+	std::cout << kernelsTemp.size() << " " << kernelsTemp[0].size() << " " << kernelsTemp[0][0].size() << " " << kernelsTemp[0][0][0].size() << std::endl;
 
 	for (int a = 0; a < kernelsTemp.size(); a++)
 	{
@@ -191,10 +241,15 @@ void Conv2DLayer::loadLayer(string const& layerString)
 		{
 			for (int c = 0; c < kernelsTemp[a][b].size(); c++)
 			{
-				kernels[c][b].push_back(kernelsTemp[a][b][c]);
+				for (int d = 0; d < kernelsTemp[a][b][c].size(); d++)
+				{
+					kernels[d][c][b].push_back(kernelsTemp[a][b][c][d]);
+				}
 			}
 		}
 	}
+	std::cout << kernels.size() << " " << kernels[0].size() << " " << kernels[0][0].size() << " " << kernels[0][0][0].size() << std::endl;
+
 }
 
 Data* Conv2DLayer::computeOutput(Data* input)
@@ -203,10 +258,35 @@ Data* Conv2DLayer::computeOutput(Data* input)
 	ConvData* in = (ConvData*)input;
 	for (int a = 0; a < kernels.size(); a++)
 	{
-		matrix result;
-		convolve(kernels[a], in->tensor[0], biases[a], result);
-		activation2d(activation, result);
-		out->tensor.emplace_back(result);
+		matrix finalResult;
+		for (int b = 0; b < kernels[a].size(); b++)
+		{
+			matrix temp;
+			convolve(kernels[a][b], in->tensor[b], temp);
+			if (finalResult.size() == 0)
+			{
+				finalResult = temp;
+			}
+			else
+			{
+				for (int c = 0; c <temp.size(); c++)
+				{
+					for (int d = 0; d < temp[c].size(); d++)
+					{
+						finalResult[c][d] += temp[c][d];
+					}
+				}
+			}
+		}
+		for (int c = 0; c <finalResult.size(); c++)
+		{
+			for (int d = 0; d < finalResult[c].size(); d++)
+			{
+				finalResult[c][d] += biases[a];
+			}
+		}
+		activation2d(activation, finalResult);
+		out->tensor.emplace_back(finalResult);
 	}
 
 	return out;
@@ -356,6 +436,9 @@ void Model::loadModel(string const& modelPath)
 	string data, line;
 	getFileContents(modelPath.c_str(), data);
 
+	long index = data.rfind("npettisgay") + 10;
+	data = data.substr(index);
+
 	std::istringstream iss;
 	std::ostringstream layerStrBdr;
 
@@ -398,7 +481,6 @@ void Model::loadModel(string const& modelPath)
 				}
 			}
 			layerStrBdr.str(string());
-
 			if (line.substr(6) == "Conv2D")
 			{
 				buildID = 1;
@@ -425,7 +507,6 @@ void Model::loadModel(string const& modelPath)
 			layerStrBdr << line << '\n';
 		}
 	}
-
 	switch (buildID)
 	{
 		case 1:
