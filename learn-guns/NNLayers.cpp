@@ -8,48 +8,18 @@
 
 void getFileContents(const char *filename, string& contents)
 {
-	std::ifstream in(filename, std::ios::in | std::ios::binary);
-	if (in)
+	FILE* fp;
+	fp = fopen(filename, "rb");
+	
+	if (fp != nullptr)
 	{
-		in.seekg(0, std::ios::end);
-		contents.resize(in.tellg());
-		in.seekg(0, std::ios::beg);
-		in.read(&contents[0], contents.size());
-		in.close();
-	}
-}
+		fseek(fp, 0, SEEK_END);
+		long size = ftell(fp);
+		rewind(fp);
 
-//not my code!
-std::istream& safeGetline(std::istream& is, std::string& t)
-{
-	t.clear();
-
-	// The characters in the stream are read one-by-one using a std::streambuf.
-	// That is faster than reading them one-by-one using the std::istream.
-	// Code that uses streambuf this way must be guarded by a sentry object.
-	// The sentry object performs various tasks,
-	// such as thread synchronization and updating the stream state.
-
-	std::istream::sentry se(is, true);
-	std::streambuf* sb = is.rdbuf();
-
-	for (;;) {
-		int c = sb->sbumpc();
-		switch (c) {
-		case '\n':
-			return is;
-		case '\r':
-			if (sb->sgetc() == '\n')
-				sb->sbumpc();
-			return is;
-		case EOF:
-			// Also handle the case when the last line has no line ending
-			if (t.empty())
-				is.setstate(std::ios::eofbit);
-			return is;
-		default:
-			t += (char)c;
-		}
+		contents.resize(size);
+		fread(&contents[0], 1, size, fp);
+		fclose(fp);
 	}
 }
 
@@ -175,6 +145,7 @@ void Conv2DLayer::loadLayer(string const& layerString)
 		if (FIND("activation", sOut))
 		{
 			activation = sOut.substr(11);
+
 		}
 		else if (FIND("bias", sOut))
 		{
@@ -233,7 +204,7 @@ void Conv2DLayer::loadLayer(string const& layerString)
 			}
 		}
 	}
-	std::cout << kernelsTemp.size() << " " << kernelsTemp[0].size() << " " << kernelsTemp[0][0].size() << " " << kernelsTemp[0][0][0].size() << std::endl;
+	//std::cout << kernelsTemp.size() << " " << kernelsTemp[0].size() << " " << kernelsTemp[0][0].size() << " " << kernelsTemp[0][0][0].size() << std::endl;
 
 	for (int a = 0; a < kernelsTemp.size(); a++)
 	{
@@ -248,8 +219,101 @@ void Conv2DLayer::loadLayer(string const& layerString)
 			}
 		}
 	}
-	std::cout << kernels.size() << " " << kernels[0].size() << " " << kernels[0][0].size() << " " << kernels[0][0][0].size() << std::endl;
+	//std::cout << kernels.size() << " " << kernels[0].size() << " " << kernels[0][0].size() << " " << kernels[0][0][0].size() << std::endl;
 
+}
+
+void Conv2DLayer::loadLayer(byte* layer, int len)
+{
+	int kernelStep = 0;
+	int depthStep = 0;
+	int colStride = 0;
+	int rowStride = 0;
+
+	vector<vector<vector<vector<float>>>> kernelsTemp;
+
+	x = (((int)layer[3] & 0xFF) << 24) | (((int)layer[2] & 0xFF) << 16) | (((int)layer[1] & 0xFF) << 8) | (((int)layer[0] & 0xFF));
+	y = (((int)layer[7] & 0xFF) << 24) | (((int)layer[6] & 0xFF) << 16) | (((int)layer[5] & 0xFF) << 8) | (((int)layer[4] & 0xFF));
+	z = (((int)layer[11] & 0xFF) << 24) | (((int)layer[10] & 0xFF) << 16) | (((int)layer[9] & 0xFF) << 8) | (((int)layer[8] & 0xFF));
+	k = (((int)layer[15] & 0xFF) << 24) | (((int)layer[14] & 0xFF) << 16) | (((int)layer[13] & 0xFF) << 8) | (((int)layer[12] & 0xFF));
+	layer += 16;
+
+	char activationName[32];
+	strncpy(activationName, (char*)layer, 32);
+	activation = activationName;
+	layer += 32;
+
+	for (int a = 0; a < len - 48;)
+	{
+		if (a >= (x * y * z * k * 4))
+		{
+			for (int start = a; a < (start + (4 * k)); a += 4)
+			{
+				float val;
+				memcpy(&val, (layer + a), 4);
+				biases.emplace_back(val);
+			}
+			break;
+		}
+		else
+		{
+			vector<float> kernel;
+			for (int start = a; a < (start + (4 * k)); a += 4)
+			{
+				float val;
+				memcpy(&val, (layer + a), 4);
+				kernel.emplace_back(val);
+			}
+			if (kernelsTemp.size() == colStride)
+			{
+				kernelsTemp.push_back(vector<vector<vector<float>>>());
+			}
+
+			if (kernelsTemp[colStride].size() == rowStride)
+			{
+				kernelsTemp[colStride].push_back(vector<vector<float>>());
+			}
+
+			kernelsTemp[colStride][rowStride].emplace_back(kernel);
+
+			if (depthStep == (z - 1))
+			{
+				depthStep = -1; rowStride++;
+			}
+			if (rowStride == y)
+			{
+				rowStride = 0; colStride++;
+			}
+			depthStep++;
+		}
+	}
+
+	for (int a = 0; a < k; a++)
+	{
+		kernels.push_back(vector<vector<vector<float>>>());
+		for (int b = 0; b < z; b++)
+		{
+			kernels[a].push_back(vector<vector<float>>());
+			for (int c = 0; c < y; c++)
+			{
+				kernels[a][b].push_back(vector<float>());
+			}
+		}
+	}
+
+	for (int a = 0; a < kernelsTemp.size(); a++)
+	{
+		for (int b = 0; b < kernelsTemp[a].size(); b++)
+		{
+			for (int c = 0; c < kernelsTemp[a][b].size(); c++)
+			{
+				for (int d = 0; d < kernelsTemp[a][b][c].size(); d++)
+				{
+					kernels[d][c][b].push_back(kernelsTemp[a][b][c][d]);
+				}
+			}
+		}
+	}
 }
 
 Data* Conv2DLayer::computeOutput(Data* input)
@@ -327,6 +391,36 @@ void DenseLayer::loadLayer(string const& layerString)
 	}
 }
 
+void DenseLayer::loadLayer(byte* layer, int len)
+{
+	memcpy(&inSize, layer, 4);
+	memcpy(&outSize, layer + 4, 4);
+	layer += 8;
+
+	char activationName[32];
+	strncpy(activationName, (char*)layer, 32);
+	activation = activationName;
+	layer += 32;
+	int a = 0;
+	for (int neuron = 0; neuron < inSize; neuron++)
+	{
+		vector<float> outputWeights;
+		for (int start = a; a < (start + (outSize * 4)); a += 4)
+		{
+			float val;
+			memcpy(&val, layer + a, 4);
+			outputWeights.emplace_back(val);
+		}
+		weights.emplace_back(outputWeights);
+	}
+	for (int start = a;a<(start + (outSize * 4)); a += 4)
+	{
+		float val;
+		memcpy(&val, layer + a, 4);
+		biases.emplace_back(val);
+	}
+}
+
 Data* DenseLayer::computeOutput(Data* input)
 {
 	DenseData* out = new DenseData();
@@ -354,6 +448,12 @@ void MaxPooling2DLayer::loadLayer(string const& data)
 	vector<string> strides;
 	split(data, ',', strides);
 	strideW = std::stoi(strides[0]); strideH = std::stoi(strides[1]);
+}
+
+void MaxPooling2DLayer::loadLayer(byte* layer, int len)
+{
+	memcpy(&strideW, layer, 4);
+	memcpy(&strideH, layer + 4, 4);
 }
 
 Data* MaxPooling2DLayer::computeOutput(Data* input)
@@ -385,8 +485,6 @@ Data* MaxPooling2DLayer::computeOutput(Data* input)
 
 	return out;
 }
-
-void FlattenLayer::loadLayer(string const& data) {}
 
 Data* FlattenLayer::computeOutput(Data* input)
 {
@@ -431,7 +529,19 @@ void ConvData::loadFromString(string const& data)
 }
 void DenseData::loadFromString(string const& data) { }
 
-void Model::loadModel(string const& modelPath)
+void Model::loadModel(string const& modelPath, bool byteStream)
+{
+	if (byteStream)
+	{
+		loadModel_byte(modelPath);
+	}
+	else
+	{
+		loadModel_string(modelPath);
+	}
+}
+
+void Model::loadModel_string(string const& modelPath)
 {
 	string data, line;
 	getFileContents(modelPath.c_str(), data);
@@ -536,6 +646,57 @@ void Model::loadModel(string const& modelPath)
 			layers.emplace_back(layer);
 			break;
 		}
+	}
+}
+
+void Model::loadModel_byte(string const& modelPath)
+{
+	string data, line;
+	getFileContents(modelPath.c_str(), data);
+	long index = data.rfind("npettisgay") + 10;
+	data = data.substr(index);
+	int len = data.size();
+
+	byte* dataByte = new byte[len];
+	memcpy(dataByte, &data[0], len);
+	int segmentSize;
+	unsigned int curPos = 0;
+	while (curPos < len)
+	{
+		memcpy(&segmentSize, (dataByte + curPos), 4);
+		curPos += 4;
+
+		byte* dataSegmentByte = new byte[segmentSize];
+		memcpy(dataSegmentByte, (dataByte + curPos), segmentSize);
+
+		segmentSize -= 16;
+		curPos += 16;
+		Layer* newLayer = nullptr;
+
+		if (!strncmp((char*)dataSegmentByte, "Conv2D", 16))
+		{
+			newLayer = new Conv2DLayer();
+		}
+		else if (!strncmp((char*)dataSegmentByte, "Dense", 16))
+		{
+			newLayer = new DenseLayer();
+		}
+		else if (!strncmp((char*)dataSegmentByte, "Flatten", 16))
+		{
+			newLayer = new FlattenLayer();
+		}
+		else if (!strncmp((char*)dataSegmentByte, "MaxPooling2D", 16))
+		{
+			newLayer = new MaxPooling2DLayer();
+		}
+
+		if (newLayer != nullptr)
+		{
+			newLayer->loadLayer((dataSegmentByte + 16), segmentSize);
+			layers.emplace_back(newLayer);
+		}
+		curPos += segmentSize;
+		delete[] dataSegmentByte;
 	}
 }
 
